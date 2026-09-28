@@ -49,19 +49,37 @@ Zwei CSV-Dateien mit identischen Spalten:
 | `meat_price_dataset.csv` | 1.200 | Saubere Trainings- und Testdaten |
 | `meat_price_100_stress_test.csv` | 100 | Out-of-Distribution-Daten mit fehlenden Werten, Ausreißern und ungewöhnlichen Merkmalskombinationen |
 
-| Spalte | Typ | Bereich | Beschreibung |
-|---|---|---|---|
-| `meat_type` | int | 1–5 | Fleischkategorie (1 = am günstigsten, 5 = am teuersten) |
-| `fat_content_pct` | float | 2–35 | Fettanteil in Prozent |
-| `protein_pct` | float | 15–26 | Proteinanteil in Prozent |
-| `marbling_score` | int | 1–10 | Marmorierungsgrad |
-| `animal_age_months` | int | 2–71 | Alter des Tieres in Monaten |
-| `storage_days` | int | 0–20 | Lagertage |
-| `organic` | int | 0/1 | Bio-Kennzeichen |
-| `cut_quality` | int | 1–5 | Qualitätsstufe des Zuschnitts |
-| `price_eur_per_kg` | float | 2,50–43,33 | Preis in EUR pro kg (Mittelwert 23,05, Std.-Abw. 8,18) |
+| Spalte | Typ | Beschreibung |
+|---|---|---|
+| `meat_type` | int | Fleischkategorie (1 = am günstigsten, 5 = am teuersten) |
+| `fat_content_pct` | float | Fettanteil in Prozent |
+| `protein_pct` | float | Proteinanteil in Prozent |
+| `marbling_score` | int | Marmorierungsgrad |
+| `animal_age_months` | int | Alter des Tieres in Monaten |
+| `storage_days` | int | Lagertage |
+| `organic` | int | Bio-Kennzeichen (0/1) |
+| `cut_quality` | int | Qualitätsstufe des Zuschnitts (1–5) |
+| `price_eur_per_kg` | float | Preis in EUR pro kg |
 
-Der **Stresstest** ist der schwierige Teil dieses Projekts. Jede Spalte enthält zwischen 7 und 14 fehlende Werte, und viele Zeilen kombinieren Merkmale auf eine Weise, die in den sauberen Daten nie vorkommt. Er misst, wie gut ein Modell über die gelernten Muster hinaus generalisiert.
+### Saubere Daten vs. Stressdaten
+
+Die beiden Dateien decken deutlich unterschiedliche Wertebereiche ab:
+
+| Spalte | Bereich (sauber) | Bereich (Stress) | Fehlend (Stress) | Stresswerte außerhalb des sauberen Bereichs |
+|---|---|---|---|---|
+| `meat_type` | 1–5 | 1–5 | 9 | 0 |
+| `fat_content_pct` | 2–35 | 2–**58,5** | 14 | 3 |
+| `protein_pct` | 15–26 | 15,1–25 | 10 | 0 |
+| `marbling_score` | 1–10 | **0**–**12** | 11 | 2 |
+| `animal_age_months` | 2–71 | 2–**189** | 8 | 2 |
+| `storage_days` | 0–20 | 0–**80** | 9 | 2 |
+| `organic` | 0/1 | 0/1 | 9 | 0 |
+| `cut_quality` | 1–5 | 1–5 | 7 | 0 |
+| `price_eur_per_kg` | 2,50–43,33 | 12,14–**65,40** | 9 | 6 |
+
+Saubere Preise: Mittelwert 23,05 EUR, Std.-Abw. 8,18. Stresspreise: Mittelwert 29,97 EUR, Std.-Abw. 9,88.
+
+Der **Stresstest** ist der schwierige Teil dieses Projekts. Jede Spalte enthält fehlende Werte, einige Zeilen enthalten Werte weit außerhalb des sauberen Bereichs, und — am wichtigsten — die Preise liegen systematisch höher als in den sauberen Daten (siehe [Warum der Stresstest so schwer ist](#warum-der-stresstest-so-schwer-ist)). Er misst, wie gut ein Modell über die gelernten Muster hinaus generalisiert.
 
 **Wichtige Eigenschaft der Daten:** Nur `meat_type` (Korrelation 0,82 mit dem Preis) und `cut_quality` (0,39) tragen nennenswertes Signal. Die übrigen sechs Merkmale verhalten sich weitgehend wie Rauschen. Diese Abhängigkeit von einem einzigen Merkmal erklärt die meisten der folgenden Ergebnisse.
 
@@ -225,7 +243,7 @@ MAE-Werte in EUR pro kg.
 | Feature Engineering mit Verhältnissen | Kein Gewinn, Stress 27 % → 26 % | Preis (Signal) kombiniert mit Fett/Protein (Rauschen) ergibt Rauschen: *Rauschen × Signal = Rauschen* |
 | KNN-Imputation (Klassifikation) | Stress 27 % → 24 % | Der Forest nutzt mehr Merkmale, also haben schlechte Füllwerte mehr Gelegenheit, ihn in die Irre zu führen |
 | Einfachere, beschnittene Bäume | R² Test 0,87 → 0,74, Stress unverändert | Siehe „Das Pruning-Paradox" unten |
-| Ausreißer-Clipping (RF) | Keine Veränderung | Der Stresstest enthält ungewöhnliche *Kombinationen*, keine extremen Einzelwerte |
+| Ausreißer-Clipping (RF) | Keine Veränderung | Nur 2–6 Werte pro Merkmal liegen außerhalb des sauberen Bereichs, und die dominanten Merkmale (`meat_type`, `cut_quality`) haben gar keine. Clipping der Merkmale kann außerdem das eigentliche Problem nicht lösen: das verschobene Preisniveau |
 | Training auf kombiniertem Datensatz (RF) | Schlechter auf beiden Datensätzen | 100 Stress-Zeilen unter 1.300 wurden als Rauschen behandelt (siehe offene Frage unten) |
 | log(Preis) als Zielvariable | Keine Veränderung oder schlechter | Der Preis ist annähernd symmetrisch verteilt, log-Skalierung bringt daher nichts |
 | One-Hot-Encoding von `meat_type` (XGB) | Keine Veränderung | Bäume können ordinale Kategorien bereits gut aufteilen; One-Hot zersplittert nur das stärkste Merkmal |
@@ -238,7 +256,22 @@ Ein wahrscheinlicher Unterschied: Das RF-Notebook hat fehlende Preise in den Str
 
 ## Warum der Stresstest so schwer ist
 
-**Starre Grenzen.** Ein Entscheidungsbaum trifft an jedem Split eine harte Entscheidung:
+**1. Die Preise sind verschoben — der Hauptgrund.** Für jede Fleischkategorie liegen die Stresstest-Preise im Durchschnitt höher als in den sauberen Daten:
+
+| `meat_type` | Ø Preis (sauber) | Ø Preis (Stress) | Differenz |
+|---|---|---|---|
+| 1 | 14,03 | 22,10 | +8,07 |
+| 2 | 16,44 | 26,62 | +10,18 |
+| 3 | 24,20 | 32,20 | +8,00 |
+| 4 | 27,24 | 33,28 | +6,04 |
+| 5 | 32,48 | 33,57 | +1,09 |
+| **Gesamt** | **23,05** | **29,97** | **+6,92** |
+
+Ein Modell, das nur auf sauberen Daten trainiert wurde, lernt das saubere Preisniveau und sagt die Stresspreise daher im Schnitt rund 7 EUR zu niedrig voraus — egal wie es getunt ist. Das erklärt, warum keine DT- oder RF-Konfiguration ein positives Stress-R² erreicht hat, und warum kombiniertes Training (XGB NB5), bei dem das Modell die höheren Preise schon im Training sieht, als einziger Ansatz erfolgreich war.
+
+Die Verschiebung schadet auch der Klassifikation: In den Stressdaten liegen die Typen 3, 4 und 5 alle bei etwa 33 EUR, der Preis kann sie also nicht mehr trennen.
+
+**2. Starre Grenzen.** Ein Entscheidungsbaum trifft an jedem Split eine harte Entscheidung:
 
 ```
 If meat_type <= 2.5  →  go left  →  predict 16.40 EUR
@@ -247,11 +280,11 @@ If meat_type >  2.5  →  go right →  predict 28.70 EUR
 
 Eine Stresstest-Zeile mit einer ungewöhnlichen Kombination überschreitet die falsche Grenze und landet in einem Blatt, das für ganz andere Fälle gedacht ist. Ein einzelner Baum hat keine zweite Meinung und keine Möglichkeit, den Fehler zu korrigieren.
 
-**Das Pruning-Paradox.** Eigentlich sollten einfachere Bäume besser generalisieren. Ein Baum mit Tiefe 3 (6 Blätter) erreichte aber ein Stress-R² von -0,35, ein Baum mit Tiefe 7 (99 Blätter) dagegen -0,31. Die Vereinfachung kostete Genauigkeit auf den sauberen Daten und brachte beim Stresstest nichts. Das Problem ist nicht die Komplexität des Modells.
+**3. Das Pruning-Paradox.** Eigentlich sollten einfachere Bäume besser generalisieren. Ein Baum mit Tiefe 3 (6 Blätter) erreichte aber ein Stress-R² von -0,35, ein Baum mit Tiefe 7 (99 Blätter) dagegen -0,31. Die Vereinfachung kostete Genauigkeit auf den sauberen Daten und brachte beim Stresstest nichts. Das Problem ist nicht die Komplexität des Modells.
 
-**Die Randklassen sind leicht, die mittleren überlappen.** Die Klassen 1 und 5 liegen in klar getrennten Preisbereichen und erreichen einen F1 von etwa 0,75. Die Klassen 2, 3 und 4 überlappen sich im Preis und lassen sich allein über den Preis nicht trennen. Deshalb hat Target Encoding, das neue Trennmöglichkeiten für diese Gruppen schafft, den mittleren Klassen am meisten geholfen (Klasse 4: F1 0,24 → 0,54).
+**4. Die Randklassen sind leicht, die mittleren überlappen.** Die Klassen 1 und 5 liegen in klar getrennten Preisbereichen und erreichen einen F1 von etwa 0,75. Die Klassen 2, 3 und 4 überlappen sich im Preis und lassen sich allein über den Preis nicht trennen. Deshalb hat Target Encoding, das neue Trennmöglichkeiten für diese Gruppen schafft, den mittleren Klassen am meisten geholfen (Klasse 4: F1 0,24 → 0,54).
 
-**Ein Merkmal dominiert.** Die Feature Importance zeigt, wie stark die Modelle von einem einzigen Merkmal abhängen:
+**5. Ein Merkmal dominiert.** Die Feature Importance zeigt, wie stark die Modelle von einem einzigen Merkmal abhängen:
 
 | Modell | Wichtigstes Merkmal | Importance |
 |---|---|---|
@@ -262,7 +295,7 @@ Eine Stresstest-Zeile mit einer ungewöhnlichen Kombination überschreitet die f
 
 Wenn dieses dominante Merkmal in einer Stresstest-Zeile fehlt, imputiert wurde oder ungewöhnlich ist, bricht die Vorhersage ein.
 
-**XGBoost passt sich eng an.** Die XGBoost-Baseline erreichte einen Train-RMSE von 0,39, aber einen Test-RMSE von 1,30, was auf etwas Overfitting hindeutet. Alle fünf XGBoost-Notebooks nutzten dieselbe, nicht getunte Konfiguration (`n_estimators=150`, `learning_rate=0.08`, `max_depth=5`). Das Tuning steht also noch aus.
+**6. XGBoost passt sich eng an.** Die XGBoost-Baseline erreichte einen Train-RMSE von 0,39, aber einen Test-RMSE von 1,30, was auf etwas Overfitting hindeutet. Alle fünf XGBoost-Notebooks nutzten dieselbe, nicht getunte Konfiguration (`n_estimators=150`, `learning_rate=0.08`, `max_depth=5`). Das Tuning steht also noch aus.
 
 ---
 
@@ -270,12 +303,13 @@ Wenn dieses dominante Merkmal in einer Stresstest-Zeile fehlt, imputiert wurde o
 
 1. **Erst die Daten verstehen, dann modellieren.** Eine Korrelationsprüfung hätte schon vor dem ersten Training gezeigt, dass `cut_quality` als Zielvariable nicht lernbar ist.
 2. **Bessere Modelle helfen auf sauberen Daten.** Decision Tree → Random Forest → XGBoost verbesserte R² von 0,87 auf 0,97.
-3. **Bessere Modelle lösen keine Out-of-Distribution-Daten.** Tausende Hyperparameter-Kombinationen ergaben mit DT und RF nie ein positives Stress-R². Das ist ein Datenproblem, kein Tuning-Problem.
-4. **Fachwissen schlägt generische Imputation.** Das Füllen fehlender Werte pro `meat_type`-Gruppe brachte in beiden Aufgaben die besten Stresstest-Ergebnisse.
-5. **Target Encoding war die stärkste Feature-Technik** für die Klassifikation.
-6. **Beliebte Techniken sind nicht universell.** Log-Transformationen helfen bei schiefen Zielvariablen und One-Hot-Encoding bei linearen Modellen. Beides traf hier nicht zu.
-7. **Dem Modell die schwierigen Fälle zu zeigen, hat funktioniert.** Kombiniertes Training mit XGBoost war der einzige Ansatz mit positivem Stress-R².
-8. **Beides gleichzeitig zu maximieren, gelingt meist nicht.** Die beste Konfiguration auf sauberen Daten ist selten die beste beim Stresstest.
+3. **Bessere Modelle lösen keine Out-of-Distribution-Daten.** Tausende Hyperparameter-Kombinationen ergaben mit DT und RF nie ein positives Stress-R². Die Stresspreise liegen im Schnitt rund 7 EUR höher — ein Datenproblem, kein Tuning-Problem.
+4. **Zuerst die Verteilungen von Trainings- und Testdaten vergleichen.** Ein einfacher Gruppenvergleich der beiden Datensätze zeigt die Preisverschiebung sofort und erklärt die meisten Stresstest-Ergebnisse.
+5. **Fachwissen schlägt generische Imputation.** Das Füllen fehlender Werte pro `meat_type`-Gruppe brachte in beiden Aufgaben die besten Stresstest-Ergebnisse.
+6. **Target Encoding war die stärkste Feature-Technik** für die Klassifikation.
+7. **Beliebte Techniken sind nicht universell.** Log-Transformationen helfen bei schiefen Zielvariablen und One-Hot-Encoding bei linearen Modellen. Beides traf hier nicht zu.
+8. **Dem Modell die schwierigen Fälle zu zeigen, hat funktioniert.** Kombiniertes Training mit XGBoost war der einzige Ansatz mit positivem Stress-R².
+9. **Beides gleichzeitig zu maximieren, gelingt meist nicht.** Die beste Konfiguration auf sauberen Daten ist selten die beste beim Stresstest.
 
 ---
 

@@ -47,19 +47,37 @@ Two CSV files with identical columns:
 | `meat_price_dataset.csv` | 1,200 | Clean training and test data |
 | `meat_price_100_stress_test.csv` | 100 | Out-of-distribution data with missing values, outliers and unusual feature combinations |
 
-| Column | Type | Range | Description |
-|---|---|---|---|
-| `meat_type` | int | 1–5 | Meat category (1 = cheapest, 5 = most expensive) |
-| `fat_content_pct` | float | 2–35 | Fat percentage |
-| `protein_pct` | float | 15–26 | Protein percentage |
-| `marbling_score` | int | 1–10 | Marbling grade |
-| `animal_age_months` | int | 2–71 | Animal age in months |
-| `storage_days` | int | 0–20 | Days in storage |
-| `organic` | int | 0/1 | Organic flag |
-| `cut_quality` | int | 1–5 | Cut quality grade |
-| `price_eur_per_kg` | float | 2.50–43.33 | Price in EUR per kg (mean 23.05, std 8.18) |
+| Column | Type | Description |
+|---|---|---|
+| `meat_type` | int | Meat category (1 = cheapest, 5 = most expensive) |
+| `fat_content_pct` | float | Fat percentage |
+| `protein_pct` | float | Protein percentage |
+| `marbling_score` | int | Marbling grade |
+| `animal_age_months` | int | Animal age in months |
+| `storage_days` | int | Days in storage |
+| `organic` | int | Organic flag (0/1) |
+| `cut_quality` | int | Cut quality grade (1–5) |
+| `price_eur_per_kg` | float | Price in EUR per kg |
 
-The **stress test** is the hard part of this project. Every column contains between 7 and 14 missing values, and many rows combine features in ways that never occur in the clean data. It measures how well a model generalizes beyond the patterns it was trained on.
+### Clean data vs. stress data
+
+The two files cover noticeably different value ranges:
+
+| Column | Range (clean) | Range (stress) | Missing (stress) | Stress values outside clean range |
+|---|---|---|---|---|
+| `meat_type` | 1–5 | 1–5 | 9 | 0 |
+| `fat_content_pct` | 2–35 | 2–**58.5** | 14 | 3 |
+| `protein_pct` | 15–26 | 15.1–25 | 10 | 0 |
+| `marbling_score` | 1–10 | **0**–**12** | 11 | 2 |
+| `animal_age_months` | 2–71 | 2–**189** | 8 | 2 |
+| `storage_days` | 0–20 | 0–**80** | 9 | 2 |
+| `organic` | 0/1 | 0/1 | 9 | 0 |
+| `cut_quality` | 1–5 | 1–5 | 7 | 0 |
+| `price_eur_per_kg` | 2.50–43.33 | 12.14–**65.40** | 9 | 6 |
+
+Clean prices: mean 23.05 EUR, std 8.18. Stress prices: mean 29.97 EUR, std 9.88.
+
+The **stress test** is the hard part of this project. Every column contains missing values, some rows contain values far outside the clean range, and — most importantly — prices are systematically higher than in the clean data (see [Why the Stress Test Is So Hard](#why-the-stress-test-is-so-hard)). It measures how well a model generalizes beyond the patterns it was trained on.
 
 **Important data fact:** only `meat_type` (correlation 0.82 with price) and `cut_quality` (0.39) carry meaningful signal. The other six features behave mostly like noise. This single-feature dependency explains most of the results below.
 
@@ -223,7 +241,7 @@ MAE values are in EUR per kg.
 | Ratio feature engineering | No gain, stress 27% → 26% | Price (signal) combined with fat/protein (noise) gives noise: *noise × signal = noise* |
 | KNN imputation (classification) | Stress 27% → 24% | The forest uses more features, so bad fills have more chances to mislead |
 | Simpler, pruned trees | R² test 0.87 → 0.74, stress unchanged | See "The pruning paradox" below |
-| Outlier clipping (RF) | Zero change | The stress test has unusual *combinations*, not extreme single values |
+| Outlier clipping (RF) | Zero change | Only 2–6 values per feature lie outside the clean range, and the dominant features (`meat_type`, `cut_quality`) have none. Clipping features also cannot fix the real problem: the shifted price level |
 | Combined dataset training (RF) | Worse on both sets | 100 stress rows among 1,300 were treated as noise (see open question below) |
 | log(price) target | Zero change or worse | Price is roughly symmetric, so log scaling adds nothing |
 | One-hot encoding `meat_type` (XGB) | No change | Trees already split ordinal categories well; one-hot only fragments the strongest feature |
@@ -236,7 +254,22 @@ One likely difference: the RF notebook filled missing prices in the stress rows 
 
 ## Why the Stress Test Is So Hard
 
-**Rigid boundaries.** A decision tree makes one hard decision at every split:
+**1. The prices are shifted — the main reason.** For every meat type, stress-test prices are higher on average than in the clean data:
+
+| `meat_type` | Mean price (clean) | Mean price (stress) | Difference |
+|---|---|---|---|
+| 1 | 14.03 | 22.10 | +8.07 |
+| 2 | 16.44 | 26.62 | +10.18 |
+| 3 | 24.20 | 32.20 | +8.00 |
+| 4 | 27.24 | 33.28 | +6.04 |
+| 5 | 32.48 | 33.57 | +1.09 |
+| **All** | **23.05** | **29.97** | **+6.92** |
+
+A model trained only on clean data learns the clean price level and therefore predicts stress prices around 7 EUR too low on average — no matter how it is tuned. This explains why no DT or RF configuration reached a positive stress R², and why combined training (XGB NB5), where the model sees the higher prices during training, was the only approach that did.
+
+The shift also hurts classification: in the stress data, types 3, 4 and 5 all sit around 33 EUR, so price can no longer separate them.
+
+**2. Rigid boundaries.** A decision tree makes one hard decision at every split:
 
 ```
 If meat_type <= 2.5  →  go left  →  predict 16.40 EUR
@@ -245,11 +278,11 @@ If meat_type >  2.5  →  go right →  predict 28.70 EUR
 
 A stress-test row with an unusual combination crosses the wrong boundary and lands in a leaf meant for completely different samples. A single tree has no second opinion and no way to correct the mistake.
 
-**The pruning paradox.** Simpler trees were expected to generalize better, but a depth-3 tree (6 leaves) reached stress R² -0.35 while a depth-7 tree (99 leaves) reached -0.31. Simplifying cost accuracy on clean data and gained nothing on the stress test. The problem is not model complexity.
+**3. The pruning paradox.** Simpler trees were expected to generalize better, but a depth-3 tree (6 leaves) reached stress R² -0.35 while a depth-7 tree (99 leaves) reached -0.31. Simplifying cost accuracy on clean data and gained nothing on the stress test. The problem is not model complexity.
 
-**Extreme classes are easy, middle classes overlap.** Classes 1 and 5 sit at clearly separate price ranges and reach F1 around 0.75. Classes 2, 3 and 4 overlap in price and cannot be separated by price alone. That is why target encoding, which adds new ways to separate these groups, helped the middle classes most (class 4: F1 0.24 → 0.54).
+**4. Extreme classes are easy, middle classes overlap.** Classes 1 and 5 sit at clearly separate price ranges and reach F1 around 0.75. Classes 2, 3 and 4 overlap in price and cannot be separated by price alone. That is why target encoding, which adds new ways to separate these groups, helped the middle classes most (class 4: F1 0.24 → 0.54).
 
-**One feature dominates.** Feature importance shows how dependent the models are on a single feature:
+**5. One feature dominates.** Feature importance shows how dependent the models are on a single feature:
 
 | Model | Top feature | Importance |
 |---|---|---|
@@ -260,7 +293,7 @@ A stress-test row with an unusual combination crosses the wrong boundary and lan
 
 When the dominant feature is missing, imputed or unusual in a stress-test row, the prediction breaks.
 
-**XGBoost fits tightly.** The XGBoost baseline reached train RMSE 0.39 but test RMSE 1.30, which suggests some overfitting. All five XGBoost notebooks used the same untuned configuration (`n_estimators=150`, `learning_rate=0.08`, `max_depth=5`), so tuning is still open.
+**6. XGBoost fits tightly.** The XGBoost baseline reached train RMSE 0.39 but test RMSE 1.30, which suggests some overfitting. All five XGBoost notebooks used the same untuned configuration (`n_estimators=150`, `learning_rate=0.08`, `max_depth=5`), so tuning is still open.
 
 ---
 
@@ -268,12 +301,13 @@ When the dominant feature is missing, imputed or unusual in a stress-test row, t
 
 1. **Understand the data before modeling.** A correlation check would have shown that `cut_quality` was an unlearnable target before any model was trained.
 2. **Better models help on clean data.** Decision Tree → Random Forest → XGBoost improved R² from 0.87 to 0.97.
-3. **Better models do not fix out-of-distribution data.** Thousands of hyperparameter combinations never produced a positive stress R² with DT or RF. This is a data problem, not a tuning problem.
-4. **Domain knowledge beats generic imputation.** Filling missing values per `meat_type` group gave the best stress-test results in both tasks.
-5. **Target encoding was the strongest feature technique** for classification.
-6. **Popular techniques are not universal.** Log transforms help skewed targets and one-hot encoding helps linear models. Neither applied here.
-7. **Showing the model the hard cases worked.** Combined training with XGBoost was the only approach with a positive stress R².
-8. **You usually cannot maximize both.** The best configuration on clean data is rarely the best on the stress test.
+3. **Better models do not fix out-of-distribution data.** Thousands of hyperparameter combinations never produced a positive stress R² with DT or RF. The stress prices are about 7 EUR higher on average — a data problem, not a tuning problem.
+4. **Compare the distributions of train and test data first.** A simple per-group comparison of the two datasets reveals the price shift immediately and explains most of the stress-test results.
+5. **Domain knowledge beats generic imputation.** Filling missing values per `meat_type` group gave the best stress-test results in both tasks.
+6. **Target encoding was the strongest feature technique** for classification.
+7. **Popular techniques are not universal.** Log transforms help skewed targets and one-hot encoding helps linear models. Neither applied here.
+8. **Showing the model the hard cases worked.** Combined training with XGBoost was the only approach with a positive stress R².
+9. **You usually cannot maximize both.** The best configuration on clean data is rarely the best on the stress test.
 
 ---
 
