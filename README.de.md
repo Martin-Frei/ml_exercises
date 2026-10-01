@@ -378,6 +378,12 @@ Für einen neuen Algorithmus (z. B. LightGBM, KNN, neuronale Netze) einen neuen 
 
 ---
 
+## Danksagung
+
+Dieses Projekt entstand im Rahmen von ML-Tutoring-Sessions mit [Adeena](https://github.com/Adeenasamoo), die die Experimente begleitet und die Ergebnisse geprüft hat.
+
+---
+
 ## Lizenz
 
 Dieses Projekt steht unter der MIT-Lizenz — siehe [LICENSE](LICENSE).

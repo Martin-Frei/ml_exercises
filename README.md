@@ -376,6 +376,12 @@ For a new algorithm (e.g. LightGBM, KNN, neural networks), add a new block to th
 
 ---
 
+## Acknowledgments
+
+This project was developed as part of ML tutoring sessions with [Adeena](https://github.com/Adeenasamoo), who guided the experiments and reviewed the results.
+
+---
+
 ## License
 
 This project is licensed under the MIT License — see [LICENSE](LICENSE).
